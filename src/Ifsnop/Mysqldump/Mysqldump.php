@@ -277,20 +277,35 @@ class Mysqldump
     /**
      * Returns the LIMIT for the table.  Must be numeric to be returned.
      * @param $tableName
+     * @param $chunk_mode
      * @return boolean
      */
-    public function getTableLimit($tableName)
+    public function getTableLimit($tableName, $chunk_mode = false)
     {
         if (empty($this->tableLimits[$tableName])) {
             return false;
         }
-
+        
         $limit = $this->tableLimits[$tableName];
-        if (!is_numeric($limit)) {
-            return false;
+        
+        if ($chunk_mode) {
+            if ( ! is_string($limit)) {
+                return false;
+            }            
+            $exploded = explode(",", $limit);
+            $filtered = array_filter( $exploded, 'is_numeric' );
+            
+            if (count($filtered) !== count($exploded) || 2 !== count($filtered)) {
+                return false;
+            }
+        } else {
+            
+            if (!is_numeric($limit)) {
+                return false;
+            }                    
         }
-
-        return $limit;
+        
+        return $limit;   
     }
 
     /**
@@ -387,59 +402,57 @@ class Mysqldump
     }
 
     /**
-     * Primary function, triggers dumping.
-     *
-     * @param string $filename  Name of file to write sql dump to
-     * @return null
-     * @throws \Exception
+     * Dump File header section
      */
-    public function start($filename = '')
+    private function dumpFileHeaderSection()
     {
-        // Output file can be redefined here
-        if (!empty($filename)) {
-            $this->fileName = $filename;
-        }
-
-        // Connect to database
-        $this->connect();
-
-        // Create output file
-        $this->compressManager->open($this->fileName);
-
-        // Write some basic info to output file
         $this->compressManager->write($this->getDumpFileHeader());
-
         // Store server settings and use sanner defaults to dump
         $this->compressManager->write(
             $this->typeAdapter->backup_parameters()
-        );
-
+            );
         if ($this->dumpSettings['databases']) {
             $this->compressManager->write(
                 $this->typeAdapter->getDatabaseHeader($this->dbName)
-            );
+                );
             if ($this->dumpSettings['add-drop-database']) {
                 $this->compressManager->write(
                     $this->typeAdapter->add_drop_database($this->dbName)
-                );
+                    );
             }
-        }
-
+        }        
+    }
+    
+    /**
+     * Get database structures
+     * @param boolean $only_structure_tables
+     */
+    private function getDatabaseStructures($only_structure_tables = false)
+    {
         // Get table, view, trigger, procedures, functions and events structures from
         // database.
-        $this->getDatabaseStructureTables();
-        $this->getDatabaseStructureViews();
-        $this->getDatabaseStructureTriggers();
-        $this->getDatabaseStructureProcedures();
-        $this->getDatabaseStructureFunctions();
-        $this->getDatabaseStructureEvents();
-
+        $this->getDatabaseStructureTables();  
+        if ( false === $only_structure_tables) {
+            $this->getDatabaseStructureViews();
+            $this->getDatabaseStructureTriggers();
+            $this->getDatabaseStructureProcedures();
+            $this->getDatabaseStructureFunctions();
+            $this->getDatabaseStructureEvents();  
+        }      
+    }
+    
+    /**
+     * Output header end
+     * @throws Exception
+     */
+    private function outputHeaderEnd()
+    {
         if ($this->dumpSettings['databases']) {
             $this->compressManager->write(
                 $this->typeAdapter->databases($this->dbName)
-            );
+                );
         }
-
+        
         // If there still are some tables/views in include-tables array,
         // that means that some tables or views weren't found.
         // Give proper error and exit.
@@ -447,24 +460,101 @@ class Mysqldump
         if (0 < count($this->dumpSettings['include-tables'])) {
             $name = implode(",", $this->dumpSettings['include-tables']);
             throw new Exception("Table (".$name.") not found in database");
-        }
-
-        $this->exportTables();
+        }        
+    }
+    
+    /**
+     * Do export
+     */
+    private function doExport()
+    {
         $this->exportTriggers();
         $this->exportFunctions();
         $this->exportProcedures();
         $this->exportViews();
-        $this->exportEvents();
-
+        $this->exportEvents();        
+    }
+    
+    /**
+     * Do close
+     */
+    private function doClose()
+    {
         // Restore saved parameters.
         $this->compressManager->write(
             $this->typeAdapter->restore_parameters()
-        );
+            );
         // Write some stats to output file.
         $this->compressManager->write($this->getDumpFileFooter());
         // Close output file.
-        $this->compressManager->close();
+        $this->compressManager->close();        
+    }
+    
+    /**
+     * Primary function, triggers dumping.
+     * @param string $filename  Name of file to write sql dump to
+     * @param boolean $chunk_mode
+     * @param number $chunk_index
+     * @param number $batch_size
+     * @param string $table
+     * @param array $tables
+     * @param number $table_count
+     * @return void|NULL
+     */
+    public function start($filename = '', $chunk_mode = false, $chunk_index = 0, $batch_size = 10, $table = '', $tables = [], $table_count = 0)
+    {
+        // Output file can be redefined here
+        if (!empty($filename)) {
+            $this->fileName = $filename;
+        }
 
+        if ($chunk_mode && $table) {
+            $this->setTableLimits([$table => "$chunk_index, $batch_size"]);
+        }
+        
+        $write_header = false;
+        $updated_tables_count = count($tables);
+        if ($chunk_mode && $updated_tables_count === $table_count) {
+            $write_header = true;
+        }
+        // Connect to database
+        $this->connect();
+
+        // Create output file
+        $this->compressManager->open($this->fileName, $chunk_mode);
+
+        // Write some basic info to output file        
+        if ($chunk_mode && $write_header) {
+            $this->dumpFileHeaderSection();
+            $this->getDatabaseStructures(true);
+            $this->outputHeaderEnd();            
+        }
+        
+        if ( ! $chunk_mode) {
+            $this->dumpFileHeaderSection();
+            $this->getDatabaseStructures();
+            $this->outputHeaderEnd(); 
+        }   
+        
+        if ($chunk_mode && ! $write_header) {
+            if (1 === count($tables)) {
+                $this->getDatabaseStructures(false);
+            } else {
+                $this->getDatabaseStructures(true);
+            }            
+        }
+        
+        $count = $this->exportTables($chunk_mode, $batch_size, $chunk_index);
+        if ($chunk_mode && $count) {
+            // Still has some data to dump, return to update..
+            return $count;
+        }
+        
+        if ((1 === count($tables) && $chunk_mode) || ! $chunk_mode )  {            
+            $this->doExport();            
+            $this->doClose();         
+        }
+        
         return;
     }
 
@@ -665,25 +755,32 @@ class Mysqldump
 
     /**
      * Exports all the tables selected from database
-     *
-     * @return null
+     * @param boolean $chunk_mode
+     * @param number $batch_size
+     * @param number $chunk_index
+     * @return number
      */
-    private function exportTables()
+    private function exportTables($chunk_mode = false, $batch_size = 10, $chunk_index = 0)
     {
+        $count = 0;
         // Exporting tables one by one
         foreach ($this->tables as $table) {
             if ($this->matches($table, $this->dumpSettings['exclude-tables'])) {
                 continue;
             }
-            $this->getTableStructure($table);
+            $this->getTableStructure($table, $chunk_index, $chunk_mode);
             if (false === $this->dumpSettings['no-data']) { // don't break compatibility with old trigger
-                $this->listValues($table);
+                $count = $this->listValues($table, $chunk_mode, $batch_size);
             } elseif (true === $this->dumpSettings['no-data']
                  || $this->matches($table, $this->dumpSettings['no-data'])) {
                 continue;
             } else {
-                $this->listValues($table);
+                $count = $this->listValues($table, $chunk_mode, $batch_size);
             }
+        }
+        
+        if ($chunk_mode) {
+            return $count;
         }
     }
 
@@ -766,14 +863,13 @@ class Mysqldump
 
     /**
      * Table structure extractor
-     *
-     * @todo move specific mysql code to typeAdapter
-     * @param string $tableName  Name of table to export
-     * @return null
+     * @param $tableName
+     * @param number $chunk_index
+     * @param boolean $chunk_mode
      */
-    private function getTableStructure($tableName)
+    private function getTableStructure($tableName, $chunk_index = 0, $chunk_mode = false)
     {
-        if (!$this->dumpSettings['no-create-info']) {
+        if (!$this->dumpSettings['no-create-info'] && !$chunk_mode || !$this->dumpSettings['no-create-info'] && $chunk_mode && 0 === $chunk_index ) {            
             $ret = '';
             if (!$this->dumpSettings['skip-comments']) {
                 $ret = "--".PHP_EOL.
@@ -1085,12 +1181,12 @@ class Mysqldump
 
     /**
      * Table rows extractor
-     *
-     * @param string $tableName  Name of table to export
-     *
-     * @return null
+     * @param $tableName
+     * @param boolean $chunk_mode
+     * @param number $batch_size
+     * @return number
      */
-    private function listValues($tableName)
+    private function listValues($tableName, $chunk_mode = false, $batch_size = 10)
     {
         $this->prepareListValues($tableName);
 
@@ -1113,7 +1209,7 @@ class Mysqldump
             $stmt .= " WHERE {$condition}";
         }
 
-        $limit = $this->getTableLimit($tableName);
+        $limit = $this->getTableLimit($tableName, $chunk_mode);
 
         if ($limit) {
             $stmt .= " LIMIT {$limit}";
@@ -1156,7 +1252,15 @@ class Mysqldump
             $this->compressManager->write(";".PHP_EOL);
         }
 
-        $this->endListValues($tableName, $count);
+        if ($chunk_mode && 0 === $count) {
+            $this->endListValues($tableName, $count);
+        }
+        
+        if ( ! $chunk_mode ) {
+            $this->endListValues($tableName, $count);
+        }
+        
+        return $count;
     }
 
     /**
@@ -1429,11 +1533,19 @@ class CompressNone extends CompressManagerFactory
     private $fileHandler = null;
 
     /**
-     * @param string $filename
+     * 
+     * @param $filename
+     * @param boolean $chunk_mode
+     * @throws Exception
+     * @return boolean
      */
-    public function open($filename)
+    public function open($filename, $chunk_mode = false)
     {
-        $this->fileHandler = fopen($filename, "wb");
+        $mode = "wb";
+        if ($chunk_mode) {
+            $mode = "ab";
+        }
+        $this->fileHandler = fopen($filename, $mode);
         if (false === $this->fileHandler) {
             throw new Exception("Output file is not writable");
         }
