@@ -11,6 +11,8 @@
  * @license  http://www.gnu.org/copyleft/gpl.html GNU General Public License
  * @link     https://github.com/ifsnop/mysqldump-php
  *
+ * Revision by Codexonics Limited
+ * For Prime Mover WordPress plugin
  */
 
 namespace Ifsnop\Mysqldump;
@@ -23,9 +25,9 @@ use PDOException;
  * Class Mysqldump.
  *
  * @category Library
- * @author   Diego Torres <ifsnop@github.com>
+ * @author   Codexonics Limited <codexonics.com> / Diego Torres <ifsnop@github.com>
  * @license  http://www.gnu.org/copyleft/gpl.html GNU General Public License
- * @link     https://github.com/ifsnop/mysqldump-php
+ * @link     https://github.com/codex-m/mysqldump-php
  *
  */
 class Mysqldump
@@ -491,17 +493,21 @@ class Mysqldump
     }
     
     /**
-     * Primary function, triggers dumping.
-     * @param string $filename  Name of file to write sql dump to
+     * 
+     * @param string $filename
      * @param boolean $chunk_mode
      * @param number $chunk_index
      * @param number $batch_size
      * @param string $table
      * @param array $tables
      * @param number $table_count
-     * @return void|NULL
+     * @param array $primary_keys
+     * @param array $orderbykeys
+     * @param array $left_off
+     * @return void|array
      */
-    public function start($filename = '', $chunk_mode = false, $chunk_index = 0, $batch_size = 10, $table = '', $tables = [], $table_count = 0)
+    public function start($filename = '', $chunk_mode = false, $chunk_index = 0, $batch_size = 10, $table = '', $tables = [], 
+        $table_count = 0, $primary_keys = [], $orderbykeys = [], $left_off = [])
     {
         // Output file can be redefined here
         if (!empty($filename)) {
@@ -543,10 +549,9 @@ class Mysqldump
                 $this->getDatabaseStructures(true);
             }            
         }
-        
-        $count = $this->exportTables($chunk_mode, $batch_size, $chunk_index);
-        if ($chunk_mode && $count) {
-            // Still has some data to dump, return to update..
+       
+        $count = $this->exportTables($chunk_mode, $batch_size, $chunk_index, $primary_keys, $orderbykeys, $left_off);        
+        if ($chunk_mode && $count['count']) {            
             return $count;
         }
         
@@ -568,7 +573,7 @@ class Mysqldump
         $header = '';
         if (!$this->dumpSettings['skip-comments']) {
             // Some info about software, source and time
-            $header = "-- mysqldump-php https://github.com/ifsnop/mysqldump-php".PHP_EOL.
+            $header = "-- mysqldump-php https://github.com/codex-m/mysqldump-php".PHP_EOL.
                     "--".PHP_EOL.
                     "-- Host: {$this->host}\tDatabase: {$this->dbName}".PHP_EOL.
                     "-- ------------------------------------------------------".PHP_EOL;
@@ -758,9 +763,12 @@ class Mysqldump
      * @param boolean $chunk_mode
      * @param number $batch_size
      * @param number $chunk_index
-     * @return number
+     * @param array $primary_keys
+     * @param array $orderbykeys
+     * @param array $left_off
+     * @return array|number[]|array[]|array[][]
      */
-    private function exportTables($chunk_mode = false, $batch_size = 10, $chunk_index = 0)
+    private function exportTables($chunk_mode = false, $batch_size = 10, $chunk_index = 0, $primary_keys = [], $orderbykeys = [], $left_off = [])
     {
         $count = 0;
         // Exporting tables one by one
@@ -770,12 +778,12 @@ class Mysqldump
             }
             $this->getTableStructure($table, $chunk_index, $chunk_mode);
             if (false === $this->dumpSettings['no-data']) { // don't break compatibility with old trigger
-                $count = $this->listValues($table, $chunk_mode, $batch_size);
+                $count = $this->listValues($table, $chunk_mode, $batch_size, $primary_keys, $orderbykeys, $left_off);
             } elseif (true === $this->dumpSettings['no-data']
                  || $this->matches($table, $this->dumpSettings['no-data'])) {
                 continue;
             } else {
-                $count = $this->listValues($table, $chunk_mode, $batch_size);
+                $count = $this->listValues($table, $chunk_mode, $batch_size, $primary_keys, $orderbykeys, $left_off);
             }
         }
         
@@ -1178,43 +1186,79 @@ class Mysqldump
             $row
         ));
     }
-
+    
+    /**
+     * Generate where to seek condition
+     * This is used for seek method
+     * @param array $primary_keys
+     * @param array $left_off
+     * @return string
+     */
+    private function generateWhereToSeekCondition($primary_keys = [], $left_off = [])
+    {      
+        $condition = "(" . implode(",", $primary_keys) . ")" . " > " . "(" . implode(",", $left_off) . ")";        
+        return " WHERE {$condition}";
+    }
+    
+    /**
+     * Order by clause
+     * @param array $orderbykeys
+     * @return string
+     */
+    private function generateOrderByClause($orderbykeys = [])
+    {        
+        $orderby = implode(",", $orderbykeys) . " ASC";         
+        return " ORDER BY {$orderby}";
+    }
+    
     /**
      * Table rows extractor
      * @param $tableName
      * @param boolean $chunk_mode
      * @param number $batch_size
-     * @return number
+     * @param array $primary_keys
+     * @param array $orderbykeys
+     * @param array $left_off
+     * @return array
      */
-    private function listValues($tableName, $chunk_mode = false, $batch_size = 10)
+    private function listValues($tableName, $chunk_mode = false, $batch_size = 10, $primary_keys = [], $orderbykeys = [], $left_off = [])
     {
         $this->prepareListValues($tableName);
-
+        $seek_method = false;
+        if (!empty($primary_keys)) {
+            $seek_method = true;
+        }
+        
         $onlyOnce = true;
         $lineSize = 0;
-
-        // colStmt is used to form a query to obtain row values
         $colStmt = $this->getColumnStmt($tableName);
-        // colNames is used to get the name of the columns when using complete-insert
         if ($this->dumpSettings['complete-insert']) {
             $colNames = $this->getColumnNames($tableName);
         }
-
+        
         $stmt = "SELECT ".implode(",", $colStmt)." FROM `$tableName`";
-
-        // Table specific conditions override the default 'where'
-        $condition = $this->getTableWhere($tableName);
-
-        if ($condition) {
-            $stmt .= " WHERE {$condition}";
+        if ($seek_method && !empty($left_off)) {
+            $stmt .= $this->generateWhereToSeekCondition($primary_keys, $left_off);
         }
-
-        $limit = $this->getTableLimit($tableName, $chunk_mode);
-
+        
+        if ($seek_method) {
+            $orderbykeys = $primary_keys;
+        }
+        
+        if (!empty($orderbykeys)) {
+            $stmt .= $this->generateOrderByClause($orderbykeys);
+        }
+        
+        $limit = 0;
+        if ($seek_method) {
+            $limit = $batch_size;
+        } else {
+            $limit = $this->getTableLimit($tableName, $chunk_mode);
+        }
         if ($limit) {
             $stmt .= " LIMIT {$limit}";
         }
-
+        
         $resultSet = $this->dbHandler->query($stmt);
         $resultSet->setFetchMode(PDO::FETCH_ASSOC);
 
@@ -1246,6 +1290,12 @@ class Mysqldump
                 $lineSize = $this->compressManager->write(";".PHP_EOL);
             }
         }
+       
+        $left_off = [];
+        if (isset($row) && $seek_method) {
+            $left_off = $this->computeLeftOff($primary_keys, $row, $tableName);
+        }
+        
         $resultSet->closeCursor();
 
         if (!$onlyOnce) {
@@ -1256,13 +1306,51 @@ class Mysqldump
             $this->endListValues($tableName, $count);
         }
         
-        if ( ! $chunk_mode ) {
+        if (!$chunk_mode ) {
             $this->endListValues($tableName, $count);
         }
-        
-        return $count;
+       
+        return ['count' => $count, 'left_off' => $left_off];
     }
 
+    /**
+     * Compute left off 
+     * @param array $primary_keys
+     * @param array $row
+     * @param mixed $tableName
+     * @return mixed[]
+     */
+    private function computeLeftOff($primary_keys = [], $row = [], $tableName)
+    { 
+        $left_off = [];
+        foreach ($primary_keys as $primary_key) {
+            $primary_key = trim($primary_key, "`");
+            if (isset($row[$primary_key])) {             
+                $left_off[] = $this->escapeLeftOff($tableName, $primary_key, $row[$primary_key]);
+            }           
+        }
+        
+        return $left_off;        
+    }
+    
+    /**
+     * Escape left off values
+     * @param mixed $tableName
+     * @param mixed $colName
+     * @param mixed $colValue
+     * @return mixed
+     */
+    private function escapeLeftOff($tableName, $colName, $colValue)
+    {
+        $columnTypes = $this->tableColumnTypes[$tableName];
+        $colType = $columnTypes[$colName];
+        if ($colType['is_numeric']) {
+            return $colValue;
+        }
+            
+        return $this->dbHandler->quote($colValue);
+    }
+    
     /**
      * Table rows extractor, append information prior to dump
      *
