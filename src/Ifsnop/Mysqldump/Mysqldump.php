@@ -1300,8 +1300,8 @@ class Mysqldump
         foreach ($resultSet as $row) {
             $count++;
             $vals = $this->prepareColumnValues($tableName, $row);
-            if ($onlyOnce || !$this->dumpSettings['extended-insert']) {
-                $this->maybeTestSlowDump();
+            $this->maybeTestSlowDump();
+            if ($onlyOnce || !$this->dumpSettings['extended-insert']) {                
                 if ($this->dumpSettings['complete-insert']) {
                     $lineSize += $this->compressManager->write(
                         "INSERT$ignore INTO `$tableName` (".
