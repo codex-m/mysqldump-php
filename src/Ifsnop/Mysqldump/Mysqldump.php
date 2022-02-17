@@ -1192,12 +1192,44 @@ class Mysqldump
      * This is used for seek method
      * @param array $primary_keys
      * @param array $left_off
+     * @param string $tableName
      * @return string
      */
-    private function generateWhereToSeekCondition($primary_keys = [], $left_off = [])
+    private function generateWhereToSeekCondition($primary_keys = [], $left_off = [], $tableName = '')
     {      
+        $left_off = $this->maybeBase64DecodeLeftOff($left_off, $primary_keys, $tableName);
         $condition = "(" . implode(",", $primary_keys) . ")" . " > " . "(" . implode(",", $left_off) . ")";        
         return " WHERE {$condition}";
+    }
+
+    /**
+     * Maybe base64 decode left off binary values
+     * @param array $left_off
+     * @param array $primary_keys
+     * @param string $tableName
+     * @return array
+     */
+    private function maybeBase64DecodeLeftOff($left_off = [], $primary_keys = [], $tableName = '')
+    {
+        $decoded_leftoff = [];
+        $columnTypes = $this->tableColumnTypes[$tableName];
+       
+        foreach ($primary_keys as $k => $pk) {
+            $pk = trim($pk, "`");
+            $colType = $columnTypes[$pk];
+            $type = '';
+            if (!empty($colType['type'])) {
+                $type = $colType['type'];
+            }
+            
+            if ('binary' === $type) {
+                $decoded_leftoff[] = $this->dbHandler->quote(base64_decode($left_off[$k]));
+            } else {
+                $decoded_leftoff[] = $left_off[$k];
+            }
+        }
+        
+        return $decoded_leftoff;
     }
     
     /**
@@ -1238,7 +1270,7 @@ class Mysqldump
         
         $stmt = "SELECT ".implode(",", $colStmt)." FROM `$tableName`";
         if ($seek_method && !empty($left_off)) {
-            $stmt .= $this->generateWhereToSeekCondition($primary_keys, $left_off);
+            $stmt .= $this->generateWhereToSeekCondition($primary_keys, $left_off, $tableName);
         }
         
         if ($seek_method) {
@@ -1269,6 +1301,7 @@ class Mysqldump
             $count++;
             $vals = $this->prepareColumnValues($tableName, $row);
             if ($onlyOnce || !$this->dumpSettings['extended-insert']) {
+                $this->maybeTestSlowDump();
                 if ($this->dumpSettings['complete-insert']) {
                     $lineSize += $this->compressManager->write(
                         "INSERT$ignore INTO `$tableName` (".
@@ -1314,6 +1347,21 @@ class Mysqldump
     }
 
     /**
+     * Maybe test delay (devs only)
+     */
+    private function maybeTestSlowDump()
+    {
+        if (!defined('PRIME_MOVER_TEST_SLOW_PHPDUMP')) {
+            return;
+        }
+        $delay = (int)PRIME_MOVER_TEST_SLOW_PHPDUMP;
+        if (!$delay) {
+            return;
+        }
+        usleep($delay);
+    }
+    
+    /**
      * Compute left off 
      * @param array $primary_keys
      * @param array $row
@@ -1346,8 +1394,16 @@ class Mysqldump
         $colType = $columnTypes[$colName];
         if ($colType['is_numeric']) {
             return $colValue;
+        }        
+        $type = '';
+        if (!empty($colType['type'])) {
+            $type = $colType['type'];
         }
-            
+        
+        if ('binary' === $type) {
+            return base64_encode($colValue);
+        }
+        
         return $this->dbHandler->quote($colValue);
     }
     
