@@ -1368,7 +1368,7 @@ class Mysqldump
      * @param mixed $tableName
      * @return mixed[]
      */
-    private function computeLeftOff($primary_keys = [], $row = [], $tableName)
+    private function computeLeftOff($primary_keys = [], $row = [], $tableName = '')
     { 
         $left_off = [];
         foreach ($primary_keys as $primary_key) {
@@ -2504,8 +2504,7 @@ class TypeAdapterMysql extends TypeAdapterFactory
     {
         $ret = "/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;".PHP_EOL.
             "/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;".PHP_EOL.
-            "/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;".PHP_EOL.
-            "/*!40101 SET NAMES ".$this->dumpSettings['default-character-set']." */;".PHP_EOL;
+            "/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;".PHP_EOL;
 
         if (false === $this->dumpSettings['skip-tz-utc']) {
             $ret .= "/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;".PHP_EOL.
