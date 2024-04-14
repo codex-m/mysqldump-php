@@ -86,7 +86,8 @@ class Mysqldump
     private $version;
     private $tableColumnTypes = array();
     private $transformColumnValueCallable;
-
+    private $ansi_quotes_enabled;
+    
     /**
      * Database name, parsed from dsn.
      * @var string
@@ -203,8 +204,34 @@ class Mysqldump
 
         // Create a new compressManager to manage compressed output
         $this->compressManager = CompressManagerFactory::create($this->dumpSettings['compress']);
+        
+        //Check if server has ANSI_QUOTES enabled
+        $this->ansi_quotes_enabled = $this->maybeAnsiQuotesEnabled($dumpSettings);
     }
 
+    /**
+     * Verify if command to disable ANSI_QUOTES is set
+     * @param array $dumpSettings
+     * @return boolean
+     */
+    protected function maybeAnsiQuotesEnabled($dumpSettings = [])
+    {
+        if (empty($dumpSettings['init_commands'])) {
+            return false;
+        }
+        
+        $init_commands = $dumpSettings['init_commands'];
+        return (in_array("SET SESSION sql_mode=(SELECT REPLACE(@@sql_mode,'ANSI_QUOTES',''))", $init_commands));
+    }
+    
+    /**
+     * Checks if ANSI_QUOTES enabled on this server
+     * @return boolean
+     */
+    public function isAnsiQuotesEnabled()
+    {
+        return $this->ansi_quotes_enabled;
+    }
     /**
      * Destructor of Mysqldump. Unsets dbHandlers and database objects.
      */
@@ -879,6 +906,7 @@ class Mysqldump
     {
         if (!$this->dumpSettings['no-create-info'] && !$chunk_mode || !$this->dumpSettings['no-create-info'] && $chunk_mode && 0 === $chunk_index ) {            
             $ret = '';
+            $ansi_quotes_enabled = $this->isAnsiQuotesEnabled();
             if (!$this->dumpSettings['skip-comments']) {
                 $ret = "--".PHP_EOL.
                     "-- Table structure for table `$tableName`".PHP_EOL.
@@ -893,7 +921,7 @@ class Mysqldump
                     );
                 }
                 $this->compressManager->write(
-                    $this->typeAdapter->create_table($r)
+                    $this->typeAdapter->create_table($r, $ansi_quotes_enabled)
                 );
                 break;
             }
@@ -1819,7 +1847,7 @@ abstract class TypeAdapterFactory
      * function create_table Get table creation code from database
      * @todo make it do something with sqlite
      */
-    public function create_table($row)
+    public function create_table($row, $ansi_quotes_enabled)
     {
         return "";
     }
@@ -2120,13 +2148,17 @@ class TypeAdapterMysql extends TypeAdapterFactory
         return "SHOW CREATE EVENT `$eventName`";
     }
 
-    public function create_table($row)
+    public function create_table($row, $ansi_quotes_enabled)
     {
         if (!isset($row['Create Table'])) {
             throw new Exception("Error getting table code, unknown output");
         }
 
         $createTable = $row['Create Table'];
+        if (true === $ansi_quotes_enabled) {            
+            $createTable = str_replace('"', '`', $createTable);
+        } 
+        
         if ($this->dumpSettings['reset-auto-increment']) {
             $match = "/AUTO_INCREMENT=[0-9]+/s";
             $replace = "";
