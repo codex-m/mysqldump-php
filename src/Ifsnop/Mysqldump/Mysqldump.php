@@ -20,6 +20,7 @@ namespace Ifsnop\Mysqldump;
 use Exception;
 use PDO;
 use PDOException;
+use Codexonics\PrimeMoverBridgeIO;
 
 /**
  * Class Mysqldump.
@@ -1734,7 +1735,7 @@ class CompressNone extends CompressManagerFactory
         if ($chunk_mode) {
             $mode = "ab";
         }
-        $this->fileHandler = fopen($filename, $mode);
+        $this->fileHandler = PrimeMoverBridgeIO::call('fopen', $filename, $mode);
         if (false === $this->fileHandler) {
             throw new Exception("Output file is not writable");
         }
@@ -1744,7 +1745,7 @@ class CompressNone extends CompressManagerFactory
 
     public function write($str)
     {
-        $bytesWritten = fwrite($this->fileHandler, $str);
+        $bytesWritten = PrimeMoverBridgeIO::call('fwrite', $this->fileHandler, $str);
         if (false === $bytesWritten) {
             throw new Exception("Writting to file failed! Probably, there is no more free space left?");
         }
@@ -1753,7 +1754,7 @@ class CompressNone extends CompressManagerFactory
 
     public function close()
     {
-        return fclose($this->fileHandler);
+        return PrimeMoverBridgeIO::call('fclose', $this->fileHandler);
     }
 }
 
@@ -1768,7 +1769,7 @@ class CompressGzipstream extends CompressManagerFactory
    */
   public function open($filename)
   {
-    $this->fileHandler = fopen($filename, "wb");
+    $this->fileHandler = PrimeMoverBridgeIO::call('fopen', $filename, "wb");
     if (false === $this->fileHandler) {
       throw new Exception("Output file is not writable");
     }
@@ -1780,7 +1781,7 @@ class CompressGzipstream extends CompressManagerFactory
   public function write($str)
   {
 
-    $bytesWritten = fwrite($this->fileHandler, deflate_add($this->compressContext, $str, ZLIB_NO_FLUSH));
+    $bytesWritten = PrimeMoverBridgeIO::call('fwrite', $this->fileHandler, deflate_add($this->compressContext, $str, ZLIB_NO_FLUSH));
     if (false === $bytesWritten) {
       throw new Exception("Writting to file failed! Probably, there is no more free space left?");
     }
@@ -1789,8 +1790,8 @@ class CompressGzipstream extends CompressManagerFactory
 
   public function close()
   {
-    fwrite($this->fileHandler, deflate_add($this->compressContext, '', ZLIB_FINISH));
-    return fclose($this->fileHandler);
+    PrimeMoverBridgeIO::call('fwrite', $this->fileHandler, deflate_add($this->compressContext, '', ZLIB_FINISH));
+    return PrimeMoverBridgeIO::call('fclose', $this->fileHandler);
   }
 }
 
