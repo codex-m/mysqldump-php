@@ -208,8 +208,8 @@ class Mysqldump
         }
 
         $diff = array_diff(array_keys($this->dumpSettings), array_keys($dumpSettingsDefault));
-        if (count($diff) > 0) {
-            throw new Exception("Unexpected value in dumpSettings: (".implode(",", $diff).")");
+        if (count($diff) > 0) {            
+            throw new Exception( esc_html( "Unexpected value in dumpSettings: (" . implode( ",", $diff ) . ")" ) );            
         }
 
         if (!is_array($this->dumpSettings['include-tables']) ||
@@ -435,13 +435,12 @@ class Mysqldump
             }
         } catch (PDOException $e) {
             throw new Exception(
-                "Connection to ".$this->dbType." failed with message: ".
-                $e->getMessage()
-            );
+                esc_html( "Connection to " . $this->dbType . " failed with message: " . $e->getMessage() )
+                );            
         }
 
         if (is_null($this->dbHandler)) {
-            throw new Exception("Connection to ".$this->dbType."failed");
+            throw new Exception( esc_html( "Connection to " . $this->dbType . " failed" ) );            
         }
 
         $this->dbHandler->setAttribute(PDO::ATTR_ORACLE_NULLS, PDO::NULL_NATURAL);
@@ -506,7 +505,7 @@ class Mysqldump
         // This check will be removed once include-tables supports regexps.
         if (0 < count($this->dumpSettings['include-tables'])) {
             $name = implode(",", $this->dumpSettings['include-tables']);
-            throw new Exception("Table (".$name.") not found in database");
+            throw new Exception( esc_html( "Table (" . $name . ") not found in database" ) );            
         }        
     }
     
@@ -1630,8 +1629,8 @@ abstract class CompressManagerFactory
     public static function create($c)
     {
         $c = ucfirst(strtolower($c));
-        if (!CompressMethod::isValid($c)) {
-            throw new Exception("Compression method ($c) is not defined yet");
+        if (!CompressMethod::isValid($c)) {            
+            throw new Exception( esc_html( "Compression method ($c) is not defined yet" ) );            
         }
 
         $method = __NAMESPACE__."\\"."Compress".$c;
@@ -1833,7 +1832,7 @@ abstract class TypeAdapterFactory
     {
         $c = ucfirst(strtolower($c));
         if (!TypeAdapter::isValid($c)) {
-            throw new Exception("Database type support for ($c) not yet available");
+            throw new Exception( esc_html( "Database type support for ($c) not yet available" ) );            
         }
         $method = __NAMESPACE__."\\"."TypeAdapter".$c;
         return new $method($dbHandler, $dumpSettings);
@@ -2599,7 +2598,7 @@ class TypeAdapterMysql extends TypeAdapterFactory
     private function check_parameters($num_args, $expected_num_args, $method_name)
     {
         if ($num_args != $expected_num_args) {
-            throw new Exception("Unexpected parameter passed to $method_name");
+            throw new Exception( esc_html( "Unexpected parameter passed to $method_name" ) );            
         }
         return;
     }
